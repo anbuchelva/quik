@@ -51,3 +51,20 @@ fun sha256(input: String): String {
     val hashBytes = digest.digest(input.toByteArray(Charsets.UTF_8))
     return hashBytes.joinToString("") { String.format("%02x", it) }
 }
+
+fun getServiceSmsName(address: String): String? {
+    if (address.isBlank()) return null
+    val trimmed = address.trim()
+    val parts = trimmed.split("-")
+    if (parts.size >= 2) {
+        val prefix = parts[0]
+        if (prefix.length == 2 && prefix.all { it.isLetter() }) {
+            val serviceName = parts[1]
+            if (serviceName.isNotEmpty() && serviceName.all { it.isLetterOrDigit() }) {
+                return serviceName.uppercase()
+            }
+        }
+    }
+    return null
+}
+
