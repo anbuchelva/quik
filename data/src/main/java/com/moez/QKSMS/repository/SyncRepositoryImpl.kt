@@ -43,6 +43,7 @@ import dev.octoshrimpy.quik.model.EmojiReaction
 import dev.octoshrimpy.quik.model.Message
 import dev.octoshrimpy.quik.model.MmsPart
 import dev.octoshrimpy.quik.model.PhoneNumber
+import dev.octoshrimpy.quik.util.getServiceSmsName
 import dev.octoshrimpy.quik.model.Recipient
 import dev.octoshrimpy.quik.model.SyncLog
 import dev.octoshrimpy.quik.interactor.DeduplicateMessages
@@ -233,6 +234,41 @@ class SyncRepositoryImpl @Inject constructor(
                     }
                 }
 
+                // Create service conversations for merged service messages
+                val serviceMessages = realm.where(Message::class.java)
+                    .greaterThanOrEqualTo("threadId", 2_000_000_000L)
+                    .findAll()
+                val uniqueServiceThreads = serviceMessages.map { it.threadId }.distinct()
+                uniqueServiceThreads.forEach { sThreadId ->
+                    val firstMessage = serviceMessages.first { it.threadId == sThreadId }
+                    val serviceName = getServiceSmsName(firstMessage.address) ?: "Service"
+
+                    var recipient = realm.where(Recipient::class.java)
+                        .equalTo("id", sThreadId)
+                        .findFirst()
+                    if (recipient == null) {
+                        recipient = realm.createObject(Recipient::class.java, sThreadId).apply {
+                            this.address = serviceName
+                            lastUpdate = System.currentTimeMillis()
+                        }
+                    }
+
+                    var conversation = realm.where(Conversation::class.java)
+                        .equalTo("id", sThreadId)
+                        .findFirst()
+                    if (conversation == null) {
+                        conversation = realm.createObject(Conversation::class.java, sThreadId).apply {
+                            recipients.add(recipient)
+                            sendAsGroup = false
+                        }
+                    }
+
+                    conversation?.lastMessage = realm.where(Message::class.java)
+                        .equalTo("threadId", sThreadId)
+                        .sort("date", Sort.DESCENDING)
+                        .findFirst()
+                }
+
                 syncProgress.onNext(SyncRepository.SyncProgress.ParsingEmojis(0, 0, true))
 
                 // Now that we have all the messages, we can scan for emoji reactions
@@ -325,8 +361,50 @@ class SyncRepositoryImpl @Inject constructor(
                     }
                 }
 
-                conversationRepo.getOrCreateConversation(threadId)
+                val serviceName = getServiceSmsName(address)
+                if (serviceName != null) {
+                    Realm.getDefaultInstance().use { r ->
+                        r.executeTransaction { realmTrans ->
+                            var recipient = realmTrans.where(Recipient::class.java)
+                                .equalTo("id", threadId)
+                                .findFirst()
+                            if (recipient == null) {
+                                recipient = realmTrans.createObject(Recipient::class.java, threadId).apply {
+                                    this.address = serviceName
+                                    lastUpdate = System.currentTimeMillis()
+                                }
+                            }
+                            var conv = realmTrans.where(Conversation::class.java)
+                                .equalTo("id", threadId)
+                                .findFirst()
+                            if (conv == null) {
+                                conv = realmTrans.createObject(Conversation::class.java, threadId).apply {
+                                    recipients.add(recipient)
+                                    sendAsGroup = false
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    conversationRepo.getOrCreateConversation(threadId)
+                }
                 insertOrUpdate()
+
+                if (serviceName != null) {
+                    Realm.getDefaultInstance().use { r ->
+                        r.executeTransaction { realmTrans ->
+                            val conv = realmTrans.where(Conversation::class.java)
+                                .equalTo("id", threadId)
+                                .findFirst()
+                            if (conv != null) {
+                                conv.lastMessage = realmTrans.where(Message::class.java)
+                                    .equalTo("threadId", threadId)
+                                    .sort("date", Sort.DESCENDING)
+                                    .findFirst()
+                            }
+                        }
+                    }
+                }
 
                 val text = getText(false)
                 val parsedReaction = reactions.parseEmojiReaction(text)

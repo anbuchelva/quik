@@ -19,6 +19,7 @@
 package dev.octoshrimpy.quik.repository
 
 import android.content.ContentUris
+import android.net.Uri
 import android.content.Context
 import dev.octoshrimpy.quik.compat.TelephonyCompat
 import dev.octoshrimpy.quik.extensions.anyOf
@@ -466,6 +467,18 @@ class ConversationRepositoryImpl @Inject constructor(
                 .anyOf("threadId", threadIds)
                 .findAll()
 
+            // For service conversations, delete messages individually from the system provider
+            messages.forEach { msg ->
+                if (msg.threadId >= 2_000_000_000L) {
+                    val uri = msg.getUri()
+                    if (uri != Uri.EMPTY) {
+                        tryOrNull {
+                            context.contentResolver.delete(uri, null, null)
+                        }
+                    }
+                }
+            }
+
             realm.executeTransaction {
                 conversation.deleteAllFromRealm()
                 messages.deleteAllFromRealm()
@@ -473,11 +486,13 @@ class ConversationRepositoryImpl @Inject constructor(
         }
 
         threadIds.forEach {
-            context.contentResolver.delete(
-                ContentUris.withAppendedId(TelephonyCompat.THREADS_CONTENT_URI, it),
-                null,
-                null
-            )
+            if (it < 2_000_000_000L) {
+                context.contentResolver.delete(
+                    ContentUris.withAppendedId(TelephonyCompat.THREADS_CONTENT_URI, it),
+                    null,
+                    null
+                )
+            }
         }
     }
 

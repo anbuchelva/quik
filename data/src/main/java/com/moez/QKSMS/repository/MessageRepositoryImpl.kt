@@ -54,6 +54,8 @@ import dev.octoshrimpy.quik.model.Conversation
 import dev.octoshrimpy.quik.model.Message
 import dev.octoshrimpy.quik.model.Message.Companion.TYPE_MMS
 import dev.octoshrimpy.quik.model.Message.Companion.TYPE_SMS
+import dev.octoshrimpy.quik.model.Recipient
+import dev.octoshrimpy.quik.util.getServiceSmsName
 import dev.octoshrimpy.quik.model.MmsPart
 import dev.octoshrimpy.quik.receiver.MessageDeliveredReceiver
 import dev.octoshrimpy.quik.receiver.MessageSentReceiver
@@ -280,13 +282,30 @@ open class MessageRepositoryImpl @Inject constructor(
         if (((seen == null) && (read == null)) || threadIds.isEmpty())
             return -1
 
+        val resolvedThreadIds = threadIds.flatMap { id ->
+            if (id >= 2_000_000_000L) {
+                Realm.getDefaultInstance().use { realm ->
+                    realm.where(Message::class.java)
+                        .equalTo("threadId", id)
+                        .findAll()
+                        .map { it.systemThreadId }
+                        .distinct()
+                }
+            } else {
+                listOf(id)
+            }
+        }.toSet()
+
+        if (resolvedThreadIds.isEmpty())
+            return -1
+
         var countUpdated = 0
 
         // 'read' can be modified at the conversation level which updates all messages
         read?.let {
             tryOrNull(true) {
                 // chunked so where clause doesn't get too long if there are many threads
-                threadIds.forEach {
+                resolvedThreadIds.forEach {
                     countUpdated += context.contentResolver.update(
                         ContentUris.withAppendedId(
                             Telephony.MmsSms.CONTENT_CONVERSATIONS_URI,
@@ -302,7 +321,7 @@ open class MessageRepositoryImpl @Inject constructor(
 
         seen?.let {
             // 'seen' has to be modified at the messages level
-            threadIds.chunked(TELEPHONY_UPDATE_CHUNK_SIZE).forEach {
+            resolvedThreadIds.chunked(TELEPHONY_UPDATE_CHUNK_SIZE).forEach {
                 // chunked for smaller where clause size
                 val values = contentValuesOf(Sms.SEEN to seen)
                 val whereClause = "${Sms.SEEN} = ${if (seen) 0 else 1} " +
@@ -723,6 +742,13 @@ open class MessageRepositoryImpl @Inject constructor(
             ?.let { insertedUri -> ContentUris.parseId(insertedUri) }
             ?: 0
 
+        val serviceName = getServiceSmsName(address)
+        val deterministicThreadId = if (serviceName != null) {
+            2_000_000_000L + kotlin.math.abs(serviceName.hashCode())
+        } else {
+            threadId
+        }
+
         // insert the message to Realm
         val message = Message().apply {
             id = messageIds.newId()
@@ -730,7 +756,8 @@ open class MessageRepositoryImpl @Inject constructor(
             this.address = address
             this.body = body
             this.dateSent = sentTime
-            this.threadId = threadId
+            this.threadId = deterministicThreadId
+            this.systemThreadId = threadId
             this.subId = subId
 
             date = System.currentTimeMillis()
@@ -738,12 +765,47 @@ open class MessageRepositoryImpl @Inject constructor(
             contentId = providerContentId
             boxId = Sms.MESSAGE_TYPE_INBOX
             type = TYPE_SMS
-            read = (activeConversationManager.getActiveConversation() == threadId)
+            read = (activeConversationManager.getActiveConversation() == deterministicThreadId)
         }
 
         Realm.getDefaultInstance().use { realm ->
             var managedMessage: Message? = null
-            realm.executeTransaction { managedMessage = realm.copyToRealmOrUpdate(message) }
+            realm.executeTransaction {
+                if (serviceName != null) {
+                    var recipient = realm.where(Recipient::class.java)
+                        .equalTo("id", deterministicThreadId)
+                        .findFirst()
+                    if (recipient == null) {
+                        recipient = realm.createObject(Recipient::class.java, deterministicThreadId).apply {
+                            this.address = serviceName
+                            lastUpdate = System.currentTimeMillis()
+                        }
+                    }
+
+                    var conv = realm.where(Conversation::class.java)
+                        .equalTo("id", deterministicThreadId)
+                        .findFirst()
+                    if (conv == null) {
+                        conv = realm.createObject(Conversation::class.java, deterministicThreadId).apply {
+                            recipients.add(recipient)
+                            sendAsGroup = false
+                        }
+                    }
+                }
+                managedMessage = realm.copyToRealmOrUpdate(message)
+                
+                if (serviceName != null) {
+                    val conv = realm.where(Conversation::class.java)
+                        .equalTo("id", deterministicThreadId)
+                        .findFirst()
+                    if (conv != null) {
+                        conv.lastMessage = realm.where(Message::class.java)
+                            .equalTo("threadId", deterministicThreadId)
+                            .sort("date", Sort.DESCENDING)
+                            .findFirst()
+                    }
+                }
+            }
 
             managedMessage?.let { savedMessage ->
                 val parsedReaction = reactions.parseEmojiReaction(body)
