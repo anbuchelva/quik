@@ -33,6 +33,7 @@ import dev.octoshrimpy.quik.util.Preferences
 import dev.octoshrimpy.quik.util.SqliteWrapper
 import dev.octoshrimpy.quik.util.tryOrNull
 import javax.inject.Inject
+import dev.octoshrimpy.quik.util.getServiceSmsName
 import androidx.core.net.toUri
 
 class CursorToMessageImpl @Inject constructor(
@@ -83,7 +84,8 @@ class CursorToMessageImpl @Inject constructor(
             }
 
             id = keys.newId()
-            threadId = cursor.getLong(columnsMap.threadId)
+            systemThreadId = cursor.getLong(columnsMap.threadId)
+            threadId = systemThreadId
             contentId = cursor.getLong(columnsMap.msgId)
             date = cursor.getLong(columnsMap.date)
             dateSent = cursor.getLong(columnsMap.dateSent)
@@ -127,6 +129,11 @@ class CursorToMessageImpl @Inject constructor(
                     textContentType = ""
                     attachmentType = Message.AttachmentType.NOT_LOADED
                 }
+            }
+
+            val serviceName = getServiceSmsName(address)
+            if (serviceName != null) {
+                threadId = 2_000_000_000L + kotlin.math.abs(serviceName.hashCode())
             }
         }
     }
