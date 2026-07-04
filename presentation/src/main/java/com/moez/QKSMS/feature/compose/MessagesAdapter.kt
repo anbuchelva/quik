@@ -48,6 +48,7 @@ import dev.octoshrimpy.quik.common.util.Colors
 import dev.octoshrimpy.quik.common.util.DateFormatter
 import dev.octoshrimpy.quik.common.util.TextViewStyler
 import dev.octoshrimpy.quik.common.util.extensions.dpToPx
+import dev.octoshrimpy.quik.util.getServiceSmsName
 import dev.octoshrimpy.quik.common.util.extensions.setBackgroundTint
 import dev.octoshrimpy.quik.common.util.extensions.setPadding
 import dev.octoshrimpy.quik.common.util.extensions.setTint
@@ -467,6 +468,8 @@ class MessagesAdapter @Inject constructor(
                 )
                 message.isFailedMessage() -> context.getString(R.string.message_status_failed)
                 bodyTextTruncated -> context.getString(R.string.message_body_too_long_to_display)
+                (!message.isMe() && getServiceSmsName(message.address) != null) ->
+                    "${message.address} • ${dateFormatter.getTimestamp(message.date)}"
                 (!message.isMe() && (conversation?.recipients?.size ?: 0) > 1) ->
                     // incoming group message
                     "${contactCache[message.address]?.getDisplayName()} • ${
@@ -485,6 +488,8 @@ class MessagesAdapter @Inject constructor(
                     message.isFailedMessage() -> true
                     bodyTextTruncated -> true
                     expanded[message.id] == false -> false
+                    (!message.isMe() && getServiceSmsName(message.address) != null &&
+                            (next == null || next.address != message.address || !BubbleUtils.canGroup(message, next))) -> true
                     ((conversation?.recipients?.size ?: 0) > 1) &&
                             !message.isMe() && next?.compareSender(message) != true -> true
                     (message.isDelivered() &&
