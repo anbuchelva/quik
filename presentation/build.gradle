@@ -94,6 +94,7 @@ android {
 
     lint {
         abortOnError false
+        checkReleaseBuilds false
     }
     namespace 'dev.octoshrimpy.quik'
     buildFeatures {

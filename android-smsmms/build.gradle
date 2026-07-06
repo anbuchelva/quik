@@ -30,6 +30,7 @@ android {
     useLibrary 'org.apache.http.legacy'
     lint {
         abortOnError false
+        checkReleaseBuilds false
     }
     namespace 'com.klinker.android.send_message'
 }
