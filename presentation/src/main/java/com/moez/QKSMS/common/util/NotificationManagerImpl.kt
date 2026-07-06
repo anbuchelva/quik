@@ -141,6 +141,11 @@ class NotificationManagerImpl @Inject constructor(
         }
 
         val conversation = conversationRepo.getConversation(threadId) ?: return
+        val title = if (threadId >= 2_000_000_000L) {
+            messages.lastOrNull()?.address ?: conversation.getTitle()
+        } else {
+            conversation.getTitle()
+        }
         val lastRecipient = conversation.lastMessage?.let { lastMessage ->
             conversation.recipients.find { recipient ->
                 phoneNumberUtils.compare(recipient.address, lastMessage.address)
@@ -263,7 +268,7 @@ class NotificationManagerImpl @Inject constructor(
             Preferences.NOTIFICATION_PREVIEWS_NAME -> {
                 notification
                         .setLargeIcon(avatar)
-                        .setContentTitle(conversation.getTitle())
+                        .setContentTitle(title)
                         .setContentText(context.resources.getQuantityString(
                                 R.plurals.notification_new_messages, messages.size, messages.size))
             }
@@ -379,8 +384,10 @@ class NotificationManagerImpl @Inject constructor(
 
             context.startActivity(intent)
         }
-        val sc = shortcutManager.getOrCreateShortcut(threadId)
-        notification.setShortcutInfo(sc)
+        if (threadId < 2_000_000_000L) {
+            val sc = shortcutManager.getOrCreateShortcut(threadId)
+            notification.setShortcutInfo(sc)
+        }
         notificationManager.notify(threadId.toInt(), notification.build())
 
         // Wake screen
