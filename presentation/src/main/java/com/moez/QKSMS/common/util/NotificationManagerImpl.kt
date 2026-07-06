@@ -218,8 +218,12 @@ class NotificationManagerImpl @Inject constructor(
                     phoneNumberUtils.compare(recipient.address, message.address)
                 }
 
-                if(recipient != null)
+                if (recipient != null) {
                     person.fromRecipient(recipient, context, colors)
+                } else {
+                    person.setName(message.address)
+                    person.setKey(message.address)
+                }
             }
 
             NotificationCompat.MessagingStyle.Message(message.getSummary(), message.date, person.build()).apply {
